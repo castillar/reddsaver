@@ -433,7 +433,7 @@ async fn save_or_skip(url: &str, file_name: &str) -> Result<MediaStatus, ReddSav
     }
 }
 
-//todo!("[reqwest::async_impl::client] redirecting 'https://i.imgur.com/removed.mp4' to 'https://i.imgur.com/removed.png'")
+//done!("[reqwest::async_impl::client] redirecting 'https://i.imgur.com/removed.mp4' to 'https://i.imgur.com/removed.png'")
 
 /// Download media from the given url and save to data directory. Also create data directory if not present already
 async fn download_media(file_name: &str, url: &str) -> Result<bool, ReddSaverError> {
@@ -455,25 +455,39 @@ async fn download_media(file_name: &str, url: &str) -> Result<bool, ReddSaverErr
     };
     if let Ok(response) = maybe_response {
         debug!("URL Response: {:#?}", response);
-        let maybe_data = response.bytes().await;
-        if let Ok(data) = maybe_data {
-            debug!("Bytes length of the data: {:#?}", data.len());
-            let maybe_output = File::create(&file_name);
-            match maybe_output {
-                Ok(mut output) => {
-                    debug!("Created a file: {}", file_name);
-                    match io::copy(&mut data.as_ref(), &mut output) {
-                        Ok(_) => {
-                            info!("Successfully saved media: {} from url {}", file_name, url);
-                            status = true;
-                        }
-                        Err(_e) => {
-                            error!("Could not save media from url {} to {}", url, file_name);
+        let mut down_it = true;
+        match response.url().as_str().contains("/removed.png") {
+            true => {
+                warn!("Content at {} has been removed.", &url);
+                // "removed.png" is the default Imgur png that indicates content removal
+                //   If we get that in the path, we've been redirected to the removal image
+                //   so there's no point in downloading it.
+                down_it = false
+            },
+            false => ()
+        };
+        // Only proceed if we haven't indicated this needs skipping
+        if down_it {
+            let maybe_data = response.bytes().await;
+            if let Ok(data) = maybe_data {
+                debug!("Bytes length of the data: {:#?}", data.len());
+                let maybe_output = File::create(&file_name);
+                match maybe_output {
+                    Ok(mut output) => {
+                        debug!("Created a file: {}", file_name);
+                        match io::copy(&mut data.as_ref(), &mut output) {
+                            Ok(_) => {
+                                info!("Successfully saved media: {} from url {}", file_name, url);
+                                status = true;
+                            }
+                            Err(_e) => {
+                                error!("Could not save media from url {} to {}", url, file_name);
+                            }
                         }
                     }
-                }
-                Err(_) => {
-                    warn!("Could not create a file with the name: {}. Skipping", file_name);
+                    Err(_) => {
+                        warn!("Could not create a file with the name: {}. Skipping", file_name);
+                    }
                 }
             }
         }
