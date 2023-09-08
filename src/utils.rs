@@ -1,4 +1,5 @@
 use crate::errors::ReddSaverError;
+use lazy_static::lazy_static;
 use mime::Mime;
 use rand::Rng;
 use random_names::RandomName;
@@ -11,8 +12,14 @@ use which::which;
 
 // Because the User_Agent field has to be the same every time you wield a RedGifs token,
 //   we can use this static block to pass hash checks.
-// todo: Combine this with the get_user_agent_string() function to make a single random agent string.
-static LOC_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15";
+// done: Combine this with the get_user_agent_string() function to make a single random agent string.
+// static LOC_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15";
+lazy_static!(
+    static ref LOC_AGENT : String = {
+            let agent = get_user_agent_string(None, None);
+            agent
+    };
+);
 // This is the RedGifs API endpoint to call to fetch an authentication token
 static RG_API_URL: &str = "https://api.redgifs.com/v2/auth/temporary";
 // This is the one we'll call to pull the JSON location of the actual content
@@ -30,7 +37,7 @@ pub fn get_user_agent_string(name: Option<String>, version: Option<String>) -> S
 
         let mut rng = rand::thread_rng();
         let random_version = rng.gen::<u32>();
-        format!("{}:{}", random_name, random_version)
+        format!("Catzilla/5.0 (Banana Jr. 9000; Plan 9 version 666) {}:{} (KHTML, LIKE A BOSS)", random_name, random_version)
     }
 }
 
@@ -109,7 +116,7 @@ pub async fn check_url_is_mp4(url: &str) -> Result<Option<bool>, ReddSaverError>
 pub async fn fetch_redgif_token() -> Result<String, ReddSaverError> {
     let response = reqwest::Client::new()
         .get(RG_API_URL)
-        .header("User-Agent", LOC_AGENT)
+        .header("User-Agent", LOC_AGENT.get(0..).unwrap())
         .send().await?.text().await?;
     let resp_data: Value = serde_json::from_str(&response).unwrap();
     let tok_val = resp_data["token"].as_str();
@@ -152,7 +159,7 @@ pub async fn fetch_redgif_url(rg_token: &str, orig_url: &str) -> reqwest::Result
     debug!("RGToken: {}", rg_token);
     let response = match reqwest::Client::new()
     .get(&gifloc)
-    .header("User-Agent", LOC_AGENT)
+    .header("User-Agent", LOC_AGENT.get(0..).unwrap())
     .header("Authorization", rg_token)
     .send().await {
         Ok(e) => {
@@ -181,7 +188,7 @@ pub async fn fetch_redgif_url(rg_token: &str, orig_url: &str) -> reqwest::Result
     };
     reqwest::Client::new()
     .get(final_url)
-    .header("User-Agent", LOC_AGENT)
+    .header("User-Agent", LOC_AGENT.get(0..).unwrap())
     .header("Authorization", rg_token)
     .send().await
 }
