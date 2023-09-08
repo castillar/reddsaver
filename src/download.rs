@@ -8,16 +8,18 @@ use std::{fs, io};
 
 use futures::stream::FuturesUnordered;
 use futures::TryStreamExt;
+use lazy_static::lazy_static;
 use log::{debug, error, info, warn};
 use reqwest::StatusCode;
 use tempfile::tempdir;
 use url::{Position, Url};
+use async_once::AsyncOnce;
 
 use crate::errors::ReddSaverError;
 use crate::structures::{GfyData, PostData};
 use crate::structures::{Listing, Summary};
 use crate::user::{ListingType, User};
-use crate::utils::{check_path_present, check_url_is_mp4};
+use crate::utils::{check_path_present, check_url_is_mp4, fetch_redgif_url, fetch_redgif_token};
 
 static JPG_EXTENSION: &str = "jpg";
 static PNG_EXTENSION: &str = "png";
@@ -34,7 +36,9 @@ static IMGUR_DOMAIN: &str = "imgur.com";
 static IMGUR_SUBDOMAIN: &str = "i.imgur.com";
 
 static GFYCAT_DOMAIN: &str = "gfycat.com";
-static GFYCAT_API_PREFIX: &str = "https://api.gfycat.com/v1/gfycats";
+// Although GFYCat is no more, it turns out their API calls still work from redgifs.com...
+//   ...for now.
+static GFYCAT_API_PREFIX: &str = "https://api.redgifs.com/v1/gfycats";
 
 static REDGIFS_DOMAIN: &str = "redgifs.com";
 static REDGIFS_API_PREFIX: &str = "https://api.redgifs.com/v1/gfycats";
@@ -46,6 +50,16 @@ static GIPHY_MEDIA_SUBDOMAIN_1: &str = "media1.giphy.com";
 static GIPHY_MEDIA_SUBDOMAIN_2: &str = "media2.giphy.com";
 static GIPHY_MEDIA_SUBDOMAIN_3: &str = "media3.giphy.com";
 static GIPHY_MEDIA_SUBDOMAIN_4: &str = "media4.giphy.com";
+
+// Rather than slam the authentication endpoint for a new token every time,
+//   we can set one with this function the first time we need it, and then it'll
+//   be available as a const for everything else that needs one.
+lazy_static!{
+    static ref RG_TOKEN : AsyncOnce<String> = AsyncOnce::new(async {
+        let rgtoken = fetch_redgif_token().await.unwrap();
+        rgtoken
+    });
+}
 
 /// Status of media processing
 enum MediaStatus {
@@ -65,6 +79,7 @@ enum MediaType {
     RedditVideoWithAudio,
     RedditVideoWithoutAudio,
     GfycatGif,
+    RedgifsVideo,
     GiphyGif,
     ImgurImage,
     ImgurGif,
@@ -210,7 +225,12 @@ impl<'a> Downloader<'a> {
                                 if (media_type == MediaType::RedditVideoWithoutAudio
                                     || media_type == MediaType::RedditVideoWithAudio)
                                     && !extension.ends_with(".mp4") {
-                                    extension = format!("{}.{}", extension, ".mp4");
+                                    extension = format!("{}.{}", extension, "mp4");
+                                }
+                                // Turns out if we're calling the RG API, we always get the MP4 version now,
+                                //   so there's no need to futz with detecting the media type.
+                                if media_type == MediaType::RedgifsVideo {
+                                    extension = "mp4".to_string();
                                 }
                                 let file_name = self.generate_file_name(
                                     &url,
@@ -413,6 +433,8 @@ async fn save_or_skip(url: &str, file_name: &str) -> Result<MediaStatus, ReddSav
     }
 }
 
+//todo!("[reqwest::async_impl::client] redirecting 'https://i.imgur.com/removed.mp4' to 'https://i.imgur.com/removed.png'")
+
 /// Download media from the given url and save to data directory. Also create data directory if not present already
 async fn download_media(file_name: &str, url: &str) -> Result<bool, ReddSaverError> {
     // create directory if it does not already exist
@@ -423,8 +445,14 @@ async fn download_media(file_name: &str, url: &str) -> Result<bool, ReddSaverErr
         Ok(_) => (),
         Err(_e) => return Err(ReddSaverError::CouldNotCreateDirectory),
     }
-
-    let maybe_response = reqwest::get(url).await;
+    let maybe_response: reqwest::Result<reqwest::Response>;
+    // RedGifs media requires different handling because of the chain of URLs you
+    //   have to visit and the token you have to wield the whole time.
+    if url.contains(REDGIFS_DOMAIN) {
+        maybe_response = fetch_redgif_url(RG_TOKEN.get().await, url).await;
+    } else {
+        maybe_response = reqwest::get(url).await;
+    };
     if let Ok(response) = maybe_response {
         debug!("URL Response: {:#?}", response);
         let maybe_data = response.bytes().await;
@@ -456,6 +484,8 @@ async fn download_media(file_name: &str, url: &str) -> Result<bool, ReddSaverErr
 
 /// Convert Gfycat/Redgifs GIFs into mp4 URLs for download
 async fn gfy_to_mp4(url: &str) -> Result<Option<SupportedMedia>, ReddSaverError> {
+    // With the change to the GfyCat const (see above), this is mostly irrelevant to try
+    //   detecting; I'll come back and weed it out later. Probably.
     let api_prefix =
         if url.contains(GFYCAT_DOMAIN) { GFYCAT_API_PREFIX } else { REDGIFS_API_PREFIX };
     let maybe_media_id = url.split("/").last();
@@ -626,8 +656,8 @@ async fn get_media(data: &PostData) -> Result<Vec<SupportedMedia>, ReddSaverErro
             }
         }
 
-        // gfycat and redgifs
-        if url.contains(GFYCAT_DOMAIN) || url.contains(REDGIFS_DOMAIN) {
+        // gfycat
+        if url.contains(GFYCAT_DOMAIN) {
             // if the Gfycat/Redgifs URL points directly to the mp4, download as is
             if url.ends_with(MP4_EXTENSION) {
                 let supported_media = SupportedMedia {
@@ -644,6 +674,17 @@ async fn get_media(data: &PostData) -> Result<Vec<SupportedMedia>, ReddSaverErro
                     media.push(supported_media);
                 }
             }
+        }
+
+        // split redgifs to its own handler
+        if url.contains(REDGIFS_DOMAIN) {
+            debug!("Found RG url {}", url);
+            // we're going to pull the 'hd' link no matter what, so the extension doesn't matter
+            let supported_media = SupportedMedia {
+                components: vec![String::from(url)],
+                media_type: MediaType::RedgifsVideo,
+            };
+            media.push(supported_media);
         }
 
         // giphy
