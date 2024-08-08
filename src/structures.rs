@@ -113,6 +113,8 @@ pub struct PostData {
     pub is_video: Option<bool>,
     /// Reddit Media info
     pub media: Option<PostMedia>,
+    /// Reddit Author
+    pub author: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]

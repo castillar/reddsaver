@@ -179,6 +179,7 @@ impl<'a> Downloader<'a> {
                 async move {
                     let subreddit = item.data.subreddit.borrow();
                     let post_name = item.data.name.borrow();
+                    //let post_author: &String = item.data.author.borrow();
                     let post_title = match item.data.title.as_ref() {
                         Some(t) => t,
                         None => "",
@@ -377,10 +378,15 @@ impl<'a> Downloader<'a> {
             // name irrespective of how many times it's run. If run more than once, the
             // media is overwritten by this method
             let hash = md5::compute(url);
+            let prefix = match extension {
+                "mp4" => "vid",
+                "gif" => "gif",
+                _ => "img"
+            };
             format!(
                 // TODO: Fixme, use appropriate prefix
-                "{}/{}/img-{:x}.{}",
-                self.data_directory, subreddit, hash, extension
+                "{}/{}/{}-{:x}.{}",
+                self.data_directory, subreddit, prefix, hash, extension
             )
         } else {
             let canonical_title: String = title
