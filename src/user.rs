@@ -4,7 +4,6 @@ use crate::structures::{Listing, UserAbout};
 use crate::utils::get_user_agent_string;
 use log::{debug, info};
 use reqwest::header::USER_AGENT;
-use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Display, Formatter};
