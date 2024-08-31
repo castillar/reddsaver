@@ -6,6 +6,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::{fs, io};
 
+use async_once::AsyncOnce;
 use futures::stream::FuturesUnordered;
 use futures::TryStreamExt;
 use lazy_static::lazy_static;
@@ -13,15 +14,15 @@ use log::{debug, error, info, warn};
 use reqwest::StatusCode;
 use tempfile::tempdir;
 use url::{Position, Url};
-use async_once::AsyncOnce;
 
 use crate::errors::ReddSaverError;
 use crate::structures::{GfyData, PostData};
 use crate::structures::{Listing, Summary};
 use crate::user::{ListingType, User};
-use crate::utils::{check_path_present, check_url_is_mp4, fetch_redgif_url, fetch_redgif_token};
+use crate::utils::{check_path_present, check_url_is_mp4, fetch_redgif_token, fetch_redgif_url};
 
 static JPG_EXTENSION: &str = "jpg";
+static JPEG_EXTENSION: &str = "jpeg";
 static PNG_EXTENSION: &str = "png";
 static GIF_EXTENSION: &str = "gif";
 static GIFV_EXTENSION: &str = "gifv";
@@ -54,8 +55,8 @@ static GIPHY_MEDIA_SUBDOMAIN_4: &str = "media4.giphy.com";
 // Rather than slam the authentication endpoint for a new token every time,
 //   we can set one with this function the first time we need it, and then it'll
 //   be available as a const for everything else that needs one.
-lazy_static!{
-    static ref RG_TOKEN : AsyncOnce<String> = AsyncOnce::new(async {
+lazy_static! {
+    static ref RG_TOKEN: AsyncOnce<String> = AsyncOnce::new(async {
         let rgtoken = fetch_redgif_token().await.unwrap();
         rgtoken
     });
@@ -381,7 +382,7 @@ impl<'a> Downloader<'a> {
             let prefix = match extension {
                 "mp4" => "vid",
                 "gif" => "gif",
-                _ => "img"
+                _ => "img",
             };
             format!(
                 // TODO: Fixme, use appropriate prefix
@@ -469,8 +470,8 @@ async fn download_media(file_name: &str, url: &str) -> Result<bool, ReddSaverErr
                 //   If we get that in the path, we've been redirected to the removal image
                 //   so there's no point in downloading it.
                 down_it = false
-            },
-            false => ()
+            }
+            false => (),
         };
         // Only proceed if we haven't indicated this needs skipping
         if down_it {
@@ -614,7 +615,10 @@ async fn get_media(data: &PostData) -> Result<Vec<SupportedMedia>, ReddSaverErro
         if url.contains(REDDIT_IMAGE_SUBDOMAIN) {
             // if the URL uses the reddit image subdomain and if the extension is
             // jpg, png or gif, then we can use the URL as is.
-            if url.ends_with(JPG_EXTENSION) || url.ends_with(PNG_EXTENSION) {
+            if url.ends_with(JPG_EXTENSION)
+                || url.ends_with(JPEG_EXTENSION)
+                || url.ends_with(PNG_EXTENSION)
+            {
                 let translated = String::from(url);
                 let supported_media = SupportedMedia {
                     components: vec![translated],
@@ -758,7 +762,9 @@ async fn get_media(data: &PostData) -> Result<Vec<SupportedMedia>, ReddSaverErro
                 media.push(supported_media);
             }
             if url.contains(IMGUR_SUBDOMAIN)
-                && (url.ends_with(PNG_EXTENSION) || url.ends_with(JPG_EXTENSION))
+                && (url.ends_with(PNG_EXTENSION)
+                    || url.ends_with(JPG_EXTENSION)
+                    || url.ends_with(JPEG_EXTENSION))
             {
                 let supported_media = SupportedMedia {
                     components: vec![String::from(url)],
